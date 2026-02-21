@@ -88,7 +88,7 @@ async function solveTurnstile() {
             }
 
             const res = await axios.post(TURNSTILE_SERVER, {
-                mode: 'turnstile-max',
+                mode: 'turnstile-min',
                 url: 'https://thenanobutton.com/',
                 siteKey: '0x4AAAAAACZpJ7kmZ3RsO1rU',
                 proxy: proxyObj
@@ -123,88 +123,100 @@ async function withdraw(amount, turnstileToken = null) {
         payload.turnstileToken = turnstileToken;
     }
 
-    try {
-        const res = await axios.post(API_WITHDRAW, payload, {
-            headers: {
-                'Origin': 'https://thenanobutton.com',
-                'Referer': 'https://thenanobutton.com/',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                'Content-Type': 'application/json'
-            },
-            httpsAgent: proxy ? new HttpsProxyAgent(proxy) : undefined
-        });
+    let withdrawAttempts = 0;
+    const maxWithdrawAttempts = 3;
 
-        if (res.status === 200 || res.status === 204) {
-            console.log('[SUCCESS] Withdrawal processed successfully!');
-            console.log(`[DATA] Response: ${JSON.stringify(res.data)}`);
-            return true;
-        } else {
-            console.log(`[WARN] Unknown status code: ${res.status}`);
-            console.log(`[DEBUG] Response: ${JSON.stringify(res.data)}`);
+    while (withdrawAttempts < maxWithdrawAttempts) {
+        withdrawAttempts++;
+        try {
+            const res = await axios.post(API_WITHDRAW, payload, {
+                headers: {
+                    'Origin': 'https://thenanobutton.com',
+                    'Referer': 'https://thenanobutton.com/',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                    'Content-Type': 'application/json'
+                },
+                httpsAgent: proxy ? new HttpsProxyAgent(proxy) : undefined
+            });
+
+            if (res.status === 200 || res.status === 204) {
+                console.log('[SUCCESS] Withdrawal processed successfully!');
+                console.log(`[DATA] Response: ${JSON.stringify(res.data)}`);
+                return true;
+            } else {
+                console.log(`[WARN] Unknown status code: ${res.status}`);
+                console.log(`[DEBUG] Response: ${JSON.stringify(res.data)}`);
+                return false;
+            }
+        } catch (e) {
+            // Handle TLS socket disconnections (common with residential proxies)
+            if (e.message.includes('Client network socket disconnected') && withdrawAttempts < maxWithdrawAttempts) {
+                console.log(`[WARN] TLS Socket disconnected. Retrying withdrawal attempt ${withdrawAttempts + 1}/${maxWithdrawAttempts}...`);
+                await new Promise(r => setTimeout(r, 2000));
+                continue;
+            }
+
+            if (e.response && e.response.data && (e.response.data.captchaRequired || e.response.data.message?.includes('captcha'))) {
+                console.log('[ALERT] CAPTCHA required for withdrawal.');
+                if (turnstileToken) {
+                    console.error('[ERROR] CAPTCHA failed even after solving.');
+                    return false;
+                }
+                try {
+                    const newToken = await solveTurnstile();
+                    return withdraw(amount, newToken);
+                } catch (err) {
+                    console.error(`[ERROR] CAPTCHA solver failed: ${err.message}`);
+                    return false;
+                }
+            }
+            console.error(`[ERROR] Withdrawal failed: ${e.message}`);
+            if (e.response && e.response.data) {
+                const errData = e.response.data;
+                console.error(`[DEBUG] API Error: ${errData.message || JSON.stringify(errData)}`);
+                if (errData.captchaRequired) console.log('[ALERT] Source reports CAPTCHA still required.');
+            }
             return false;
         }
-    } catch (e) {
-        if (e.response && e.response.data && (e.response.data.captchaRequired || e.response.data.message?.includes('captcha'))) {
-            console.log('[ALERT] CAPTCHA required for withdrawal.');
-            if (turnstileToken) {
-                console.error('[ERROR] CAPTCHA failed even after solving.');
-                return false;
-            }
-            try {
-                const newToken = await solveTurnstile();
-                return withdraw(amount, newToken);
-            } catch (err) {
-                console.error(`[ERROR] CAPTCHA solver failed: ${err.message}`);
-                return false;
-            }
-        }
-        console.error(`[ERROR] Withdrawal failed: ${e.message}`);
-        if (e.response && e.response.data) {
-            const errData = e.response.data;
-            console.error(`[DEBUG] API Error: ${errData.message || JSON.stringify(errData)}`);
-            if (errData.captchaRequired) console.log('[ALERT] Source reports CAPTCHA still required.');
-        }
-        return false;
     }
-}
 
-async function main() {
-    try {
-        const balance = await getBalance();
-        console.log(`[INFO] Current Balance: ${balance} Nano-units`);
+    async function main() {
+        try {
+            const balance = await getBalance();
+            console.log(`[INFO] Current Balance: ${balance} Nano-units`);
 
-        if (balance <= 0) {
-            console.log('[SKIP] No balance to withdraw.');
-            process.exit(0);
-        }
-
-        const success = await withdraw(balance);
-        if (success) {
-            console.log('[FINISH] Withdrawal successful.');
-
-            if (proxySeed && masterAddress) {
-                console.log('[INFO] Withdrawal to Proxy Wallet confirmed. Starting consolidation to Master Wallet...');
-                // Wait a bit for the transaction to be semi-confirmed by the API side
-                await new Promise(r => setTimeout(r, 10000));
-
-                const consolidatorProc = spawn('node', ['consolidator.js', proxySeed, masterAddress]);
-                consolidatorProc.stdout.on('data', (d) => console.log(`[CONSOLIDATOR] ${d.toString().trim()}`));
-                consolidatorProc.stderr.on('data', (d) => console.log(`[CONSOLIDATOR ERROR] ${d.toString().trim()}`));
-                consolidatorProc.on('close', (code) => {
-                    console.log(`[CONSOLIDATOR] Finished with code ${code}`);
-                    process.exit(0);
-                });
-            } else {
+            if (balance <= 0) {
+                console.log('[SKIP] No balance to withdraw.');
                 process.exit(0);
             }
-        } else {
-            console.log('[FAIL] Withdrawal failed.');
+
+            const success = await withdraw(balance);
+            if (success) {
+                console.log('[FINISH] Withdrawal successful.');
+
+                if (proxySeed && masterAddress) {
+                    console.log('[INFO] Withdrawal to Proxy Wallet confirmed. Starting consolidation to Master Wallet...');
+                    // Wait a bit for the transaction to be semi-confirmed by the API side
+                    await new Promise(r => setTimeout(r, 10000));
+
+                    const consolidatorProc = spawn('node', ['consolidator.js', proxySeed, masterAddress]);
+                    consolidatorProc.stdout.on('data', (d) => console.log(`[CONSOLIDATOR] ${d.toString().trim()}`));
+                    consolidatorProc.stderr.on('data', (d) => console.log(`[CONSOLIDATOR ERROR] ${d.toString().trim()}`));
+                    consolidatorProc.on('close', (code) => {
+                        console.log(`[CONSOLIDATOR] Finished with code ${code}`);
+                        process.exit(0);
+                    });
+                } else {
+                    process.exit(0);
+                }
+            } else {
+                console.log('[FAIL] Withdrawal failed.');
+                process.exit(1);
+            }
+        } catch (e) {
+            console.error(`[CRITICAL] Script failed: ${e.message}`);
             process.exit(1);
         }
-    } catch (e) {
-        console.error(`[CRITICAL] Script failed: ${e.message}`);
-        process.exit(1);
     }
-}
 
-main();
+    main();
