@@ -5,7 +5,9 @@ const NODES = [
     'https://rainstorm.city/api',
     'https://node.somenano.com/proxy',
     'https://nanoslo.0x.no/proxy',
-    'https://uk1.public.xnopay.com/proxy'
+    'https://uk1.public.xnopay.com/proxy',
+    'https://proxy.nanos.cc/proxy',
+    'https://node.nanonext.io/proxy'
 ];
 
 async function broadcast(action, data, customTimeout = 15000) {
@@ -34,10 +36,14 @@ async function getWork(hash) {
     console.log(`[CONSOLIDATOR] Requesting work for ${hash.slice(0, 8)}...`);
     try {
         // Increase timeout to 30s for work generation
-        const res = await broadcast('work_generate', { hash }, 30000);
+        const res = await broadcast('work_generate', { hash }, 45000);
+        if (!res || !res.work) {
+            console.error(`[CONSOLIDATOR] [ERROR] Node returned empty work for hash ${hash}`);
+            return null;
+        }
         return res.work;
     } catch (e) {
-        console.log(`[CONSOLIDATOR] [WARN] Public work generation failed. This node may not support it.`);
+        console.log(`[CONSOLIDATOR] [WARN] Work generation failed: ${e.message}`);
         return null;
     }
 }
@@ -71,6 +77,10 @@ async function consolidate(seed, destination) {
                 // Get Work
                 const workHash = info.frontier === "0000000000000000000000000000000000000000000000000000000000000000" ? publicKey : info.frontier;
                 const work = await getWork(workHash);
+                if (!work) {
+                    console.error(`[CONSOLIDATOR] [FATAL] Could not receive pending block: Work generation failed on all nodes.`);
+                    throw new Error("Work generation failed");
+                }
 
                 const receiveBlock = nano.createBlock(privateKey, {
                     work: work,
@@ -98,6 +108,10 @@ async function consolidate(seed, destination) {
 
         console.log(`[CONSOLIDATOR] Consolidating ${balance} to master...`);
         const work = await getWork(info.frontier);
+        if (!work) {
+            console.error(`[CONSOLIDATOR] [FATAL] Consolidation failed: Work generation failed for send block.`);
+            throw new Error("Work generation failed");
+        }
 
         const sendBlock = nano.createBlock(privateKey, {
             work: work,
@@ -108,7 +122,7 @@ async function consolidate(seed, destination) {
         });
 
         const result = await broadcast('process', { json_block: "true", block: sendBlock.block });
-        console.log(`[CONSOLIDATOR] [SUCCESS] Consummated transfer. Hash: ${result.hash}`);
+        console.log(`[CONSOLIDATOR] [SUCCESS] Consummated transfer to ${destination.slice(0, 16)}... Hash: ${result.hash}`);
 
     } catch (e) {
         console.error(`[CONSOLIDATOR] [ERROR] ${e.message}`);

@@ -436,6 +436,7 @@ process.on('message', (msg) => {
         }
 
         console.log(`[INFO] Terminate & Sweep signal received. Securing balance...`);
+        console.log(`[INFO] Entering consolidation mode for ${tapper.withdrawAddress.slice(0, 16)}...`);
         tapper.performWithdrawal().then(() => {
             console.log(`[INFO] Sweep sequence complete. Terminating worker.`);
             process.exit(0);
