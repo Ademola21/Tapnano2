@@ -2,9 +2,9 @@ const nano = require('nanocurrency');
 const axios = require('axios');
 
 const NODES = [
+    'https://nanoslo.0x.no/proxy',
     'https://rainstorm.city/api',
     'https://node.somenano.com/proxy',
-    'https://nanoslo.0x.no/proxy',
     'https://uk1.public.xnopay.com/proxy',
     'https://proxy.nanos.cc/proxy',
     'https://node.nanonext.io/proxy'
