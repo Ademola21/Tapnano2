@@ -60,16 +60,72 @@ class FastTapper {
             let fetched = false;
             for (let attempt = 1; attempt <= 3 && !fetched; attempt++) {
                 try {
-                    const reqOpts = { timeout: 15000 };
+                    const reqOpts = {
+                        timeout: 20000,
+                        headers: {
+                            'Accept': 'application/json, text/plain, */*',
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                            'Referer': 'https://thenanobutton.com/',
+                            'Origin': 'https://thenanobutton.com'
+                        }
+                    };
                     if (this.proxy) {
                         reqOpts.httpsAgent = new HttpsProxyAgent(this.proxy);
                     }
-                    const res = await axios.get('https://api.thenanobutton.com/api/session', reqOpts);
-                    this.sessionToken = res.data.token;
-                    console.log(`[INFO] Auto-session created: ${this.sessionToken.slice(0, 16)}...`);
-                    fetched = true;
+
+                    console.log(`[INFO] Attempting session fetch (Attempt ${attempt}/3)...`);
+                    let data;
+                    try {
+                        const res = await axios.get('https://api.thenanobutton.com/api/session', reqOpts);
+                        data = res.data;
+                    } catch (axiosErr) {
+                        const status = axiosErr.response ? axiosErr.response.status : 'NETWORK_ERROR';
+                        console.warn(`[WARN] Direct API fetch failed [Status: ${status}]. Trying Solver Fallback...`);
+
+                        // FALLBACK: Use Turnstile Solver to get the session token via real browser
+                        const solverRes = await axios.post(TURNSTILE_SERVER, {
+                            url: 'https://api.thenanobutton.com/api/session',
+                            mode: 'source',
+                            proxy: this.proxy ? {
+                                host: new URL(this.proxy).hostname,
+                                port: new URL(this.proxy).port,
+                                username: new URL(this.proxy).username,
+                                password: new URL(this.proxy).password
+                            } : undefined
+                        }, { timeout: 60000 }).catch(e => {
+                            console.error(`[ERROR] Solver Fallback failed: ${e.message}`);
+                            return null;
+                        });
+
+                        if (solverRes && solverRes.data && solverRes.data.source) {
+                            try {
+                                // The source mode returns the HTML content. If it's a JSON API, it's often wrapped in <body> or raw.
+                                const html = solverRes.data.source;
+                                const jsonMatch = html.match(/\{"token":"[a-zA-Z0-9._-]+"\}/);
+                                if (jsonMatch) {
+                                    data = JSON.parse(jsonMatch[0]);
+                                    console.log(`[SUCCESS] Session token extracted via Solver Fallback.`);
+                                } else {
+                                    console.error(`[ERROR] Could not find token JSON in solver output.`);
+                                }
+                            } catch (parseErr) {
+                                console.error(`[ERROR] Failed to parse solver output: ${parseErr.message}`);
+                            }
+                        }
+                    }
+
+                    if (data && data.token) {
+                        this.sessionToken = data.token;
+                        console.log(`[INFO] Auto-session created: ${this.sessionToken.slice(0, 16)}...`);
+                        fetched = true;
+                    } else {
+                        if (attempt < 3) {
+                            console.log('[INFO] Retrying in 5 seconds...');
+                            await new Promise(r => setTimeout(r, 5000));
+                        }
+                    }
                 } catch (e) {
-                    console.error(`[ERROR] Token fetch attempt ${attempt}/3 failed: ${e.message}`);
+                    console.error(`[ERROR] Token fetch process failed: ${e.message}`);
                     if (attempt < 3) {
                         console.log('[INFO] Retrying in 5 seconds...');
                         await new Promise(r => setTimeout(r, 5000));
