@@ -88,7 +88,7 @@ class FastTapper {
                             mode: 'source',
                             proxy: this.proxy ? {
                                 host: new URL(this.proxy).hostname,
-                                port: new URL(this.proxy).port,
+                                port: parseInt(new URL(this.proxy).port),
                                 username: new URL(this.proxy).username,
                                 password: new URL(this.proxy).password
                             } : undefined

@@ -13,7 +13,24 @@ async function createBrowser() {
             turnstile: true,
             connectOption: {
                 defaultViewport: null,
-                args: isLinux ? ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'] : []
+                args: isLinux ? [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-gpu',
+                    '--disable-web-security',
+                    '--disable-site-isolation-trials',
+                    '--disable-blink-features=AutomationControlled'
+                ] : [
+                    '--disable-blink-features=AutomationControlled',
+                    '--no-first-run',
+                    '--no-service-autorun',
+                    '--password-store=basic',
+                    '--use-mock-keychain',
+                    '--ignore-certificate-errors',
+                    '--disable-web-security',
+                    '--disable-site-isolation-trials',
+                    '--disable-features=TrackingPrevention,EdgeTrackingPrevention,IsolateOrigins,site-per-process'
+                ]
             },
             disableXvfb: false,
         };

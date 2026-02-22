@@ -148,16 +148,16 @@ function getRotatedProxy(baseProxy, workerName) {
     if (!baseProxy) return '';
     try {
         const url = new URL(baseProxy);
-        // BrightData specific: inject session ID if using their domain
+        // Only inject session ID for BrightData (which officially supports this format)
+        // Rayobyte and others may return 407 if the username is modified
         if (url.hostname.includes('superproxy') || url.username.includes('brd-customer')) {
-            // Append session ID to username
             if (!url.username.includes('-session-')) {
                 url.username = `${url.username}-session-${workerName}`;
             }
         }
         return url.toString();
     } catch (e) {
-        return baseProxy; // Return as-is if parsing fails
+        return baseProxy;
     }
 }
 
@@ -469,6 +469,16 @@ app.post('/api/accounts', (req, res) => {
     fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(req.body, null, 2));
     io.emit('accounts-updated', req.body);
     res.json({ success: true });
+});
+
+server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+        console.error(`[FATAL] Port ${PORT} is already in use. Please kill the existing process first.`);
+        process.exit(1);
+    } else {
+        console.error(`[FATAL] Server error: ${err.message}`);
+        process.exit(1);
+    }
 });
 
 server.listen(PORT, '0.0.0.0', () => {

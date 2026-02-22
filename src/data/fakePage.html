@@ -1,30 +1,36 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 
 <head>
-    <meta charset="UTF-8">
+    <title>Turnstile Solver</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title></title>
 </head>
 
 <body>
     <div class="turnstile"></div>
-    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onloadTurnstileCallback" defer></script>
     <script>
+        console.log("[FAKEPAGE] Script Execution Started");
         window.onloadTurnstileCallback = function () {
-            turnstile.render('.turnstile', {
-                sitekey: '<site-key>',
-                callback: function (token) {
-                    var c = document.createElement('input');
-                    c.type = 'hidden';
-                    c.name = 'cf-response';
-                    c.value = token;
-                    document.body.appendChild(c);
-                },
-            });
+            console.log("[FAKEPAGE] Turnstile API Loaded. Rendering...");
+            try {
+                turnstile.render('.turnstile', {
+                    sitekey: '<site-key>',
+                    callback: function (token) {
+                        console.log("[FAKEPAGE] SUCCESS: Token Generated!");
+                        var c = document.createElement('input');
+                        c.type = 'hidden';
+                        c.name = 'cf-response';
+                        c.value = token;
+                        document.body.appendChild(c);
+                    }
+                });
+            } catch (e) {
+                console.error("[FAKEPAGE] Render Error: " + e.message);
+            }
         };
-
     </script>
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onloadTurnstileCallback" async
+        defer></script>
 </body>
 
 </html>

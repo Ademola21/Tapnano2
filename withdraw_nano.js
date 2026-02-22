@@ -46,7 +46,7 @@ async function getBalance() {
 }
 
 async function solveTurnstile() {
-    console.log('[INFO] Solving CAPTCHA (Turnstile-Max)...');
+    console.log('[INFO] Solving CAPTCHA (Turnstile-Max: Authentic Site Context)...');
     let proxyObj = undefined;
     if (proxy) {
         try {
@@ -57,6 +57,7 @@ async function solveTurnstile() {
     const res = await axios.post(TURNSTILE_SERVER, {
         mode: 'turnstile-max',
         url: 'https://thenanobutton.com/',
+        siteKey: '0x4AAAAAACZpJ7kmZ3RsO1rU',
         proxy: proxyObj
     }, { timeout: 70000 });
     if (res.data && res.data.token) return res.data.token;
@@ -69,8 +70,9 @@ async function withdraw(amount) {
     const maxAttempts = 6;
 
     while (attempts < maxAttempts) {
-        currentToken = null; // Start clean
-        console.log(`[INFO] Withdrawal request ${attempts}/${maxAttempts} (Proceeding WITHOUT token)...`);
+        attempts++;
+        const tokenDisplay = currentToken ? "WITH token" : "WITHOUT token";
+        console.log(`[INFO] Withdrawal attempt ${attempts}/${maxAttempts} (Proceeding ${tokenDisplay})...`);
 
         try {
             const res = await axios.post(API_WITHDRAW,
@@ -88,7 +90,7 @@ async function withdraw(amount) {
             );
 
             if (res.status === 200 || res.status === 204) {
-                console.log('[SUCCESS] Tokens secure! Withdrawal complete.');
+                console.log('[SUCCESS] Withdrawal complete.');
                 return true;
             }
         } catch (e) {
@@ -99,11 +101,11 @@ async function withdraw(amount) {
                 console.log('[ALERT] API requested CAPTCHA.');
                 if (currentToken) {
                     console.error('[ERROR] Token was rejected. Context mismatch or flagged IP.');
-                    return false;
+                    return false; // Token failed, don't loop forever
                 }
                 try {
                     currentToken = await solveTurnstile();
-                    continue; // Loop again with the token
+                    continue; // Loop again with the new token
                 } catch (err) {
                     console.error(`[ERROR] Solver failed: ${err.message}`);
                     return false;
@@ -113,6 +115,7 @@ async function withdraw(amount) {
             const isNetwork = msg.includes('socket hang up') || msg.includes('ECONNRESET') || msg.includes('timeout');
             if (isNetwork && attempts < maxAttempts) {
                 console.log(`[WARN] Network hiccup (${msg}). Retrying in 1s...`);
+                currentToken = null; // Clean token state for network retry
                 await new Promise(r => setTimeout(r, 1000));
                 continue;
             }

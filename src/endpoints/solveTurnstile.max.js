@@ -1,11 +1,11 @@
 const fs = require("fs");
-function solveTurnstileMin({ url, proxy }) {
+function solveTurnstileMax({ url, proxy }) {
   return new Promise(async (resolve, reject) => {
     if (!url) return reject("Missing url parameter");
 
     const context = await global.browser
       .createBrowserContext({
-        proxyServer: proxy ? `http://${proxy.host}:${proxy.port}` : undefined, // https://pptr.dev/api/puppeteer.browsercontextoptions
+        proxyServer: proxy ? `http://${proxy.host}:${proxy.port}` : undefined,
       })
       .catch(() => null);
 
@@ -15,13 +15,14 @@ function solveTurnstileMin({ url, proxy }) {
 
     var cl = setTimeout(async () => {
       if (!isResolved) {
-        await context.close();
+        try { await context.close(); } catch (e) { }
         reject("Timeout Error");
       }
     }, global.timeOut || 60000);
 
     try {
       const page = await context.newPage();
+      page.on('console', msg => console.log(`[MAX-PAGE-LOG] ${msg.text()}`));
 
       try {
         const session = await page.target().createCDPSession();
@@ -30,7 +31,6 @@ function solveTurnstileMin({ url, proxy }) {
           windowId,
           bounds: { windowState: 'normal' }
         });
-        // Also bring to front
         await page.bringToFront();
       } catch (e) {
         console.log("Failed to restore window:", e.message);
@@ -42,6 +42,7 @@ function solveTurnstileMin({ url, proxy }) {
           password: proxy.password,
         });
 
+      // Injection to capture the response token
       await page.evaluateOnNewDocument(() => {
         let token = null;
         async function waitForToken() {
@@ -51,44 +52,82 @@ function solveTurnstileMin({ url, proxy }) {
             } catch (e) { }
             await new Promise((resolve) => setTimeout(resolve, 500));
           }
-          var c = document.createElement("input");
-          c.type = "hidden";
-          c.name = "cf-response";
-          c.value = token;
-          document.body.appendChild(c);
+          const check = document.getElementById("turnstile-token");
+          if (check) check.value = token;
+          else {
+            const el = document.createElement("input");
+            el.id = "turnstile-token";
+            el.type = "hidden";
+            el.value = token;
+            document.body.appendChild(el);
+          }
         }
         waitForToken();
       });
 
+      console.log(`[SOLVER] Navigating to: ${url}`);
       await page.goto(url, {
         waitUntil: "domcontentloaded",
         timeout: 60000,
       });
 
-      await page.waitForSelector('[name="cf-response"]', {
-        timeout: 60000,
+      // Simulate mouse movement to help Turnstile pass
+      const mouseLoop = setInterval(async () => {
+        if (isResolved) return clearInterval(mouseLoop);
+        try {
+          await page.mouse.move(Math.random() * 500, Math.random() * 400);
+        } catch (e) { }
+      }, 2000);
+
+      // Try to find and click the Turnstile checkbox iframe if it's there
+      setTimeout(async () => {
+        try {
+          const frames = page.frames();
+          for (const frame of frames) {
+            const fUrl = frame.url();
+            if (fUrl.includes('challenges.cloudflare.com')) {
+              console.log("[SOLVER] Found Turnstile iframe, attempting interaction...");
+              const rect = await frame.$eval('body', el => {
+                const b = el.getBoundingClientRect();
+                return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+              }).catch(() => null);
+
+              if (rect) {
+                await page.mouse.click(rect.x, rect.y);
+                console.log("[SOLVER] Clicked Turnstile checkbox area.");
+              }
+            }
+          }
+        } catch (e) {
+          console.log("[SOLVER] Interaction skip/fail:", e.message);
+        }
+      }, 5000);
+
+      const tokenElement = await page.waitForSelector("#turnstile-token", {
+        timeout: global.timeOut || 60000,
       });
       const token = await page.evaluate(() => {
         try {
-          return document.querySelector('[name="cf-response"]').value;
+          return document.querySelector("#turnstile-token").value;
         } catch (e) {
           return null;
         }
       });
       isResolved = true;
+      clearInterval(mouseLoop);
       clearInterval(cl);
-      await context.close();
+      try { await context.close(); } catch (e) { }
       if (!token || token.length < 10) return reject("Failed to get token");
       return resolve(token);
     } catch (e) {
       console.log(e);
 
       if (!isResolved) {
-        await context.close();
+        try { await context.close(); } catch (e) { }
         clearInterval(cl);
         reject(e.message);
       }
     }
   });
 }
-module.exports = solveTurnstileMin;
+module.exports = solveTurnstileMax;
