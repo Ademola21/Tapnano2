@@ -1,8 +1,32 @@
 const fs = require("fs");
+
+const MAX_RETRIES = 3;
+
 function solveTurnstileMax({ url, proxy }) {
   return new Promise(async (resolve, reject) => {
     if (!url) return reject("Missing url parameter");
 
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const token = await _attemptSolve({ url, proxy });
+        return resolve(token);
+      } catch (e) {
+        const isRetryable = e.includes?.('Target closed') || e.includes?.('TargetCloseError') ||
+          e.includes?.('Protocol error') || e.includes?.('Session closed');
+        if (isRetryable && attempt < MAX_RETRIES) {
+          console.log(`[SOLVER] Attempt ${attempt}/${MAX_RETRIES} failed (${e}). Retrying in 3s...`);
+          await new Promise(r => setTimeout(r, 3000));
+        } else {
+          return reject(e);
+        }
+      }
+    }
+    reject("Max retries exceeded");
+  });
+}
+
+function _attemptSolve({ url, proxy }) {
+  return new Promise(async (resolve, reject) => {
     const context = await global.browser
       .createBrowserContext({
         proxyServer: proxy ? `http://${proxy.host}:${proxy.port}` : undefined,
@@ -12,6 +36,7 @@ function solveTurnstileMax({ url, proxy }) {
     if (!context) return reject("Failed to create browser context");
 
     let isResolved = false;
+    const isLinux = process.platform === 'linux';
 
     var cl = setTimeout(async () => {
       if (!isResolved) {
@@ -24,16 +49,19 @@ function solveTurnstileMax({ url, proxy }) {
       const page = await context.newPage();
       page.on('console', msg => console.log(`[MAX-PAGE-LOG] ${msg.text()}`));
 
-      try {
-        const session = await page.target().createCDPSession();
-        const { windowId } = await session.send('Browser.getWindowForTarget');
-        await session.send('Browser.setWindowBounds', {
-          windowId,
-          bounds: { windowState: 'normal' }
-        });
-        await page.bringToFront();
-      } catch (e) {
-        console.log("Failed to restore window:", e.message);
+      // Window restore — skip on Linux to avoid TargetCloseError
+      if (!isLinux) {
+        try {
+          const session = await page.target().createCDPSession();
+          const { windowId } = await session.send('Browser.getWindowForTarget');
+          await session.send('Browser.setWindowBounds', {
+            windowId,
+            bounds: { windowState: 'normal' }
+          });
+          await page.bringToFront();
+        } catch (e) {
+          console.log("Failed to restore window:", e.message);
+        }
       }
 
       if (proxy?.username && proxy?.password)
@@ -41,7 +69,6 @@ function solveTurnstileMax({ url, proxy }) {
           username: proxy.username,
           password: proxy.password,
         });
-
 
       // Injection to capture the response token
       await page.evaluateOnNewDocument(() => {
@@ -132,3 +159,4 @@ function solveTurnstileMax({ url, proxy }) {
   });
 }
 module.exports = solveTurnstileMax;
+

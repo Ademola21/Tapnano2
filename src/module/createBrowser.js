@@ -9,14 +9,14 @@ async function createBrowser() {
 
         const isLinux = process.platform === 'linux';
         const browserConfig = {
-            headless: isLinux ? true : false,
+            headless: false, // Must be false for Turnstile — Xvfb handles display on Linux
             turnstile: true,
             connectOption: {
                 defaultViewport: null,
                 args: isLinux ? [
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
-                    '--disable-gpu',
+                    '--disable-dev-shm-usage',
                     '--disable-web-security',
                     '--disable-site-isolation-trials',
                     '--disable-blink-features=AutomationControlled',
@@ -24,7 +24,9 @@ async function createBrowser() {
                     '--disable-default-apps',
                     '--disable-sync',
                     '--disable-extensions',
-                    '--disable-component-update'
+                    '--disable-component-update',
+                    '--use-gl=swiftshader',
+                    '--window-size=1280,720'
                 ] : [
                     '--disable-blink-features=AutomationControlled',
                     '--no-first-run',
@@ -52,27 +54,29 @@ async function createBrowser() {
         console.log(`[INFO] Launching Browser (Linux=${isLinux}, Headless=${browserConfig.headless})...`);
         const { browser, page } = await connect(browserConfig);
 
-        try {
-            const session = await page.target().createCDPSession();
-            const { windowId } = await session.send('Browser.getWindowForTarget');
-            await session.send('Browser.setWindowBounds', {
-                windowId,
-                bounds: { windowState: 'minimized' }
-            });
-            // Try to minimize any other open pages
-            const pages = await browser.pages();
-            for (const p of pages) {
-                try {
-                    const s = await p.target().createCDPSession();
-                    const { windowId: wid } = await s.send('Browser.getWindowForTarget');
-                    await s.send('Browser.setWindowBounds', {
-                        windowId: wid,
-                        bounds: { windowState: 'minimized' }
-                    });
-                } catch (err) { }
+        // Minimize browser window (skip on Linux — Xvfb has no real window manager)
+        if (!isLinux) {
+            try {
+                const session = await page.target().createCDPSession();
+                const { windowId } = await session.send('Browser.getWindowForTarget');
+                await session.send('Browser.setWindowBounds', {
+                    windowId,
+                    bounds: { windowState: 'minimized' }
+                });
+                const pages = await browser.pages();
+                for (const p of pages) {
+                    try {
+                        const s = await p.target().createCDPSession();
+                        const { windowId: wid } = await s.send('Browser.getWindowForTarget');
+                        await s.send('Browser.setWindowBounds', {
+                            windowId: wid,
+                            bounds: { windowState: 'minimized' }
+                        });
+                    } catch (err) { }
+                }
+            } catch (e) {
+                console.log("Failed to minimize initial window", e.message);
             }
-        } catch (e) {
-            console.log("Failed to minimize initial window", e.message);
         }
 
         // console.log('Browser launched');
