@@ -9,7 +9,7 @@
     "referralEnabled": true,
     "fleetPaused": true,
     "activeFleet": {
-        "targetSize": 10,
+        "targetSize": 0,
         "autoWithdraw": true,
         "withdrawLimit": 0
     }
