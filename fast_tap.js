@@ -361,29 +361,15 @@ class FastTapper {
             }
 
             // 3. Get Turnstile token from local solver (with 60s timeout)
-            console.log('[INFO] Requesting Turnstile token from local server...');
-
-            let proxyObj = undefined;
-            if (this.proxy) {
-                try {
-                    const pUrl = new URL(this.proxy);
-                    proxyObj = {
-                        host: pUrl.hostname,
-                        port: parseInt(pUrl.port),
-                        username: pUrl.username,
-                        password: pUrl.password
-                    };
-                } catch (e) {
-                    console.log(`[WARN] Failed to parse proxy URL for local server: ${e.message}`);
-                }
-            }
+            // NOTE: Solver uses DIRECT internet (no proxy) to save bandwidth.
+            // Turnstile tokens are site-specific, not IP-specific.
+            console.log('[INFO] Requesting Turnstile token from local server (direct, no proxy)...');
 
             const turnstileResponse = await axios.post(TURNSTILE_SERVER, {
                 mode: 'turnstile-max',
                 url: 'https://thenanobutton.com/',
-                siteKey: this.sitekey,
-                proxy: proxyObj
-            }, { timeout: 60000 });
+                siteKey: this.sitekey
+            }, { timeout: 180000 }); // 3 min timeout — solver handles 1 at a time, 10 workers queued
             const turnstileToken = turnstileResponse.data.token;
 
             if (!turnstileToken) {
