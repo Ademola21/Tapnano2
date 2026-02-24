@@ -5,11 +5,11 @@
     "proxyPort": "7777",
     "proxyUser": "SS1iJfvdcx",
     "proxyPass": "c53czFZm6wpRETL",
-    "referralCode": "Ademola",
+    "referralCode": "AdemolaTolu",
     "referralEnabled": true,
-    "fleetPaused": false,
+    "fleetPaused": true,
     "activeFleet": {
-        "targetSize": 0,
+        "targetSize": 10,
         "autoWithdraw": false,
         "withdrawLimit": 0
     }

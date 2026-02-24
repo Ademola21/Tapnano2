@@ -42,6 +42,7 @@ function App() {
   const [referralCode, setReferralCode] = useState('');
   const [referralEnabled, setReferralEnabled] = useState(false);
   const [fleetPaused, setFleetPaused] = useState(false);
+  const [turnstileSolverUrl, setTurnstileSolverUrl] = useState('http://localhost:3000');
 
   // Config State
   const [activeTab, setActiveTab] = useState('execution');
@@ -68,6 +69,7 @@ function App() {
         setReferralCode(settings.referralCode || '');
         setReferralEnabled(settings.referralEnabled || false);
         setFleetPaused(settings.fleetPaused || false);
+        setTurnstileSolverUrl(settings.turnstileSolverUrl || 'http://localhost:3000');
       }
       if (rescued) {
         setRescuedWallets(rescued.wallets || []);
@@ -83,6 +85,7 @@ function App() {
       setProxyUser(s.proxyUser || '');
       setProxyPass(s.proxyPass || '');
       setFleetPaused(s.fleetPaused || false);
+      setTurnstileSolverUrl(s.turnstileSolverUrl || 'http://localhost:3000');
     });
 
     socket.on('runner-status', ({ name, status }) => {
@@ -131,6 +134,10 @@ function App() {
     socket.on('rescue-updated', (data) => {
       setRescuedWallets(data.wallets || []);
       setRescuedTotal(data.totalBalance || 0);
+    });
+
+    socket.on('rescue-status', ({ seed, status }) => {
+      setRescuedWallets(prev => prev.map(w => w.seed === seed ? { ...w, rescueStatus: status } : w));
     });
 
     return () => socket.off();
@@ -400,7 +407,7 @@ function App() {
                     onClick={() => {
                       const next = !referralEnabled;
                       setReferralEnabled(next);
-                      socket.emit('save-settings', { ...{ mainWalletAddress, proxyMode, proxyHost, proxyPort, proxyUser, proxyPass, referralCode, referralEnabled: next } });
+                      socket.emit('save-settings', { ...{ mainWalletAddress, proxyMode, proxyHost, proxyPort, proxyUser, proxyPass, referralCode, referralEnabled: next, fleetPaused, turnstileSolverUrl } });
                     }}
                     className={`px-3 py-1 rounded text-[10px] font-bold border transition-all ${referralEnabled ? 'bg-green-500/20 text-green-400 border-green-500/50' : 'bg-white/5 text-text-dim border-white/10 hover:bg-white/10'}`}
                   >
@@ -417,7 +424,7 @@ function App() {
                   />
                   <button
                     onClick={() => {
-                      socket.emit('save-settings', { ...{ mainWalletAddress, proxyMode, proxyHost, proxyPort, proxyUser, proxyPass, referralCode, referralEnabled } });
+                      socket.emit('save-settings', { ...{ mainWalletAddress, proxyMode, proxyHost, proxyPort, proxyUser, proxyPass, referralCode, referralEnabled, fleetPaused, turnstileSolverUrl } });
                     }}
                     className="px-4 py-2 rounded-lg text-[10px] font-bold border bg-cyan-500/20 text-cyan-400 border-cyan-500/50 hover:bg-cyan-500/30 transition-all"
                   >
@@ -426,6 +433,35 @@ function App() {
                 </div>
                 <p className="text-[9px] text-text-dim/40 mt-3 italic leading-tight">
                   When enabled, every worker session is created with your referral code. You earn 100% of every click your workers make, plus a one-time bonus per new session.
+                </p>
+              </div>
+
+              {/* REMOTE SOLVER CONFIG */}
+              <div className="bg-black/30 p-4 rounded-xl border border-white/5">
+                <div className="flex justify-between items-center mb-4">
+                  <label className="text-xs font-bold text-text-dim uppercase tracking-wider flex items-center gap-2">
+                    🖥️ Turnstile Solver URL
+                  </label>
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="http://IP_ADDRESS:3000"
+                    className="input-field flex-1 font-mono text-[11px] py-2"
+                    value={turnstileSolverUrl}
+                    onChange={(e) => setTurnstileSolverUrl(e.target.value)}
+                  />
+                  <button
+                    onClick={() => {
+                      socket.emit('save-settings', { ...{ mainWalletAddress, proxyMode, proxyHost, proxyPort, proxyUser, proxyPass, referralCode, referralEnabled, fleetPaused, turnstileSolverUrl } });
+                    }}
+                    className="px-4 py-2 rounded-lg text-[10px] font-bold border bg-purple-500/20 text-purple-400 border-purple-500/50 hover:bg-purple-500/30 transition-all"
+                  >
+                    SAVE
+                  </button>
+                </div>
+                <p className="text-[9px] text-text-dim/40 mt-3 italic leading-tight">
+                  Point this to your dedicated 32GB VM IP if running a split architecture. Default is <code>http://localhost:3000</code>.
                 </p>
               </div>
 
@@ -757,18 +793,29 @@ function App() {
               {rescuedWallets.length > 0 ? (
                 <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
                   {rescuedWallets.map((w, i) => (
-                    <div key={i} className="bg-black/40 rounded-xl border border-white/5 p-4 hover:border-red-500/20 transition-colors">
+                    <div key={i} className={`bg-black/40 rounded-xl border p-4 transition-colors ${w.withdrawn ? 'border-green-500/30 bg-green-500/5' : 'border-white/5 hover:border-red-500/20'}`}>
                       <div className="flex justify-between items-center mb-2">
-                        <span className="text-xs font-black text-red-400">#{i + 1} &mdash; {w.name}</span>
+                        <span className="text-xs font-black text-red-400">#{i + 1} &mdash; {w.name} {w.withdrawn && <span className="text-green-400 ml-2">✓ WITHDRAWN</span>}</span>
                         <span className="text-[10px] font-mono text-orange-400 font-bold">{w.balance} NANO</span>
                       </div>
                       <div className="space-y-1">
                         <div className="text-[9px] text-text-dim/60">ADDRESS</div>
                         <div className="text-[10px] font-mono text-text-dim break-all">{w.address}</div>
-                        <div className="text-[9px] text-text-dim/60 mt-2">SEED</div>
-                        <div className="text-[10px] font-mono text-yellow-400/80 break-all">{w.seed}</div>
+                        <div className="text-[9px] text-text-dim/60 mt-2">TOKEN STATE</div>
+                        <div className="text-[10px] font-mono text-cyan-400/80 break-all">{w.token ? 'SESSION PRESERVED' : 'STALE (RETRY IMPOSSIBLE)'}</div>
                         <div className="text-[8px] text-text-dim/40 mt-1">Rescued: {new Date(w.rescuedAt).toLocaleString()}</div>
                       </div>
+                      {!w.withdrawn && w.token && (
+                        <div className="mt-4 flex gap-2">
+                          <button
+                            onClick={() => socket.emit('rescue-retry-withdrawal', w.seed)}
+                            disabled={w.rescueStatus === 'retrying...'}
+                            className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest border transition-all ${w.rescueStatus === 'retrying...' ? 'bg-white/5 text-text-dim border-white/10 animate-pulse' : 'bg-orange-500/10 text-orange-400 border-orange-500/30 hover:bg-orange-500/30'}`}
+                          >
+                            {w.rescueStatus === 'retrying...' ? 'WITHDRAWING...' : 'RETRY WITHDRAWAL'}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

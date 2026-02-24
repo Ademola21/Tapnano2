@@ -20,7 +20,7 @@ function solveAltcha(salt, challenge, maxNumber = 10000000) {
 }
 
 const WS_URL = 'wss://api.thenanobutton.com/ws';
-const TURNSTILE_SERVER = 'http://127.0.0.1:3000/cf-clearance-scraper';
+let TURNSTILE_SERVER = 'http://127.0.0.1:3000/cf-clearance-scraper';
 
 class FastTapper {
     constructor(sessionToken, proxy = null) {
@@ -511,6 +511,15 @@ const threshold = parseInt(process.argv[5]) || 0;
 const referralCode = process.argv[6] || '';
 const savedWalletSeed = process.argv[7] || '';
 const savedWalletAddr = process.argv[8] || '';
+const remoteSolverUrl = process.argv[9] || null;
+
+if (remoteSolverUrl) {
+    TURNSTILE_SERVER = remoteSolverUrl;
+    // Append /cf-clearance-scraper if not present to match the expected endpoint
+    if (!TURNSTILE_SERVER.includes('/cf-clearance-scraper')) {
+        TURNSTILE_SERVER = TURNSTILE_SERVER.replace(/\/+$/, '') + '/cf-clearance-scraper';
+    }
+}
 
 const tapper = new FastTapper(token, proxy);
 tapper.withdrawAddress = address;

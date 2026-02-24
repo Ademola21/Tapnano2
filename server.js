@@ -8,6 +8,9 @@ const cors = require('cors');
 const axios = require('axios');
 const { createWallet, ensureWallets, fillFleet } = require('./wallet_mgr');
 
+const isSolverOnly = process.argv.includes('--solver-only');
+const isWorkerOnly = process.argv.includes('--worker-only');
+
 // Global Safety Shields
 process.on('uncaughtException', (err) => {
     console.error(`[CRITICAL] Uncaught Exception on Master: ${err.stack || err.message}`);
@@ -64,39 +67,11 @@ let settings = {
         targetSize: 0,
         autoWithdraw: false,
         withdrawLimit: 0
-    }
+    },
+    turnstileSolverUrl: "http://localhost:3000"
 };
 let solverProcess = null;
 let rescuedWallets = []; // Wallets that received funds but failed to consolidate
-
-// Load initial data
-if (fs.existsSync(ACCOUNTS_FILE)) {
-    try {
-        allAccounts = JSON.parse(fs.readFileSync(ACCOUNTS_FILE, 'utf8'));
-    } catch (e) { console.error("Error loading accounts:", e); }
-}
-
-if (fs.existsSync(SETTINGS_FILE)) {
-    try {
-        settings = { ...settings, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) };
-    } catch (e) { console.error("Error loading settings:", e); }
-}
-
-if (fs.existsSync(RESCUED_FILE)) {
-    try {
-        rescuedWallets = JSON.parse(fs.readFileSync(RESCUED_FILE, 'utf8'));
-        console.log(`[SERVER] Loaded ${rescuedWallets.length} rescued wallets from disk.`);
-    } catch (e) { console.error("Error loading rescued wallets:", e); }
-}
-
-// Active sessions: map of workerName -> { sessionToken, proxyWalletSeed, proxyWalletAddress, earnings, proxy }
-let activeSessions = {};
-if (fs.existsSync(SESSIONS_FILE)) {
-    try {
-        activeSessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
-        console.log(`[SERVER] Loaded ${Object.keys(activeSessions).length} saved sessions from disk.`);
-    } catch (e) { console.error("Error loading sessions:", e); }
-}
 
 function flushSessions() {
     try {
@@ -114,7 +89,7 @@ async function checkNodes() {
             nodeHealth[url] = { status: 'down', error: e.message };
         }
     }
-    io.emit('node-health', nodeHealth);
+    if (!isSolverOnly) io.emit('node-health', nodeHealth);
 }
 
 async function autoRecoverFleet() {
@@ -144,8 +119,38 @@ async function initServer() {
     setTimeout(autoRecoverFleet, 5000);
 }
 
-initServer();
-setInterval(checkNodes, 30000);
+if (!isSolverOnly) {
+    // Load dashboard data only if NOT in solver-only mode
+    if (fs.existsSync(ACCOUNTS_FILE)) {
+        try {
+            allAccounts = JSON.parse(fs.readFileSync(ACCOUNTS_FILE, 'utf8'));
+        } catch (e) { console.error("Error loading accounts:", e); }
+    }
+
+    if (fs.existsSync(SETTINGS_FILE)) {
+        try {
+            settings = { ...settings, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) };
+        } catch (e) { console.error("Error loading settings:", e); }
+    }
+
+    if (fs.existsSync(RESCUED_FILE)) {
+        try {
+            rescuedWallets = JSON.parse(fs.readFileSync(RESCUED_FILE, 'utf8'));
+            console.log(`[SERVER] Loaded ${rescuedWallets.length} rescued wallets from disk.`);
+        } catch (e) { console.error("Error loading rescued wallets:", e); }
+    }
+
+    if (fs.existsSync(SESSIONS_FILE)) {
+        try {
+            activeSessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+            console.log(`[SERVER] Loaded ${Object.keys(activeSessions).length} saved sessions from disk.`);
+        } catch (e) { console.error("Error loading sessions:", e); }
+    }
+
+    // Initial node check and fleet recovery
+    initServer();
+    setInterval(checkNodes, 30000);
+}
 
 function getAccounts() {
     return allAccounts;
@@ -169,26 +174,46 @@ function flushRescuedWallets() {
     }
 }
 
-function rescueWallet(workerName) {
+function rescueWallet(workerName, optionalToken = null, optionalProxy = null) {
     const acc = allAccounts.find(a => a.name === workerName);
-    if (!acc || !acc.wallet_seed) return;
-    // Don't double-rescue
-    if (rescuedWallets.find(w => w.seed === acc.wallet_seed)) return;
+    const sess = activeSessions[workerName] || {};
 
-    const earnings = runners[workerName]?.earnings || acc.earnings || 0;
-    if (earnings <= 0) return; // No point rescuing zero-balance wallets
+    const seed = sess.proxyWalletSeed || (acc ? acc.wallet_seed : null);
+    const address = sess.proxyWalletAddress || (acc ? acc.wallet_address : null);
 
-    const entry = {
-        name: workerName,
-        address: acc.wallet_address,
-        seed: acc.wallet_seed,
-        balance: earnings,
-        rescuedAt: new Date().toISOString()
-    };
-    rescuedWallets.push(entry);
+    if (!seed) return;
+
+    // Update existing entry if found, otherwise create new
+    let entry = rescuedWallets.find(w => w.seed === seed);
+    const earnings = runners[workerName]?.earnings || (acc ? acc.earnings : 0) || (sess.earnings) || 0;
+    if (earnings <= 0 && !entry) return; // No point rescuing zero-balance wallets if not already known
+
+    // Pull session token and proxy from active sessions if not provided
+    const token = optionalToken || sess.sessionToken || '';
+    const proxy = optionalProxy || sess.proxy || (acc ? acc.proxy : '') || '';
+
+    if (entry) {
+        entry.balance = Math.max(entry.balance, earnings);
+        entry.token = token || entry.token;
+        entry.proxy = proxy || entry.proxy;
+        entry.lastUpdate = new Date().toISOString();
+    } else {
+        entry = {
+            name: workerName,
+            address: address,
+            seed: seed,
+            balance: earnings,
+            token: token,
+            proxy: proxy,
+            rescuedAt: new Date().toISOString()
+        };
+        rescuedWallets.push(entry);
+    }
+
     flushRescuedWallets();
-    console.log(`[RESCUE] Saved wallet for ${workerName} (${earnings} nano) to rescue vault.`);
-    io.emit('rescue-updated', { count: rescuedWallets.length, totalBalance: rescuedWallets.reduce((s, w) => s + (w.balance || 0), 0), wallets: rescuedWallets });
+    console.log(`[RESCUE] Secured ${workerName} (${earnings} NANO) to vault. Session: ${token ? 'AVAILABLE' : 'MISSING'}`);
+    const totalBalance = rescuedWallets.reduce((s, w) => s + (w.balance || 0), 0);
+    io.emit('rescue-updated', { count: rescuedWallets.length, totalBalance, wallets: rescuedWallets });
 }
 
 // Periodic flush every 60 seconds
@@ -296,9 +321,25 @@ io.on('connection', (socket) => {
     });
 
     socket.on('save-settings', (newSettings) => {
+        const refEnabledChanged = newSettings.referralEnabled !== undefined && newSettings.referralEnabled !== settings.referralEnabled;
+        const refCodeChanged = newSettings.referralCode !== undefined && newSettings.referralCode !== settings.referralCode;
+
         settings = { ...settings, ...newSettings };
         fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 4));
         console.log("[SERVER] Settings updated and saved.");
+
+        // If referral code or enabled status changed, invalidate all cached session tokens
+        // This forces runners to fetch fresh sessions with the correct code on next start
+        if (refEnabledChanged || refCodeChanged) {
+            console.log("[SERVER] Referral settings changed! Invalidating all active session tokens to force rotation.");
+            Object.keys(activeSessions).forEach(name => {
+                if (activeSessions[name]) {
+                    delete activeSessions[name].sessionToken;
+                }
+            });
+            flushSessions();
+        }
+
         io.emit('settings-updated', settings);
     });
 
@@ -447,33 +488,44 @@ io.on('connection', (socket) => {
         Object.keys(activeSessions).forEach(name => {
             const sess = activeSessions[name];
             if (sess.earnings > 0 && sess.proxyWalletSeed) {
-                // Check if already in rescue vault by seed
-                const isRescued = rescuedWallets.some(w => w.seed === sess.proxyWalletSeed);
-                if (!isRescued) {
-                    const entry = {
-                        name: name,
-                        address: sess.proxyWalletAddress,
-                        seed: sess.proxyWalletSeed,
-                        balance: sess.earnings,
-                        rescuedAt: new Date().toISOString(),
-                        source: 'stale_session'
-                    };
-                    rescuedWallets.push(entry);
-                    rescuedCount++;
-                    rescuedAmount += sess.earnings;
-                    console.log(`[RESCUE] Salvaged ${name} (${sess.earnings} NANO) from stale session.`);
-                }
+                // Use the updated rescueWallet logic to handle duplicates and tokens
+                rescueWallet(name, sess.sessionToken, sess.proxy);
+                rescuedCount++;
+                rescuedAmount += sess.earnings;
             }
         });
+        console.log(`[RESCUE] Deep scan complete. Processed ${rescuedCount} potential stale sessions.`);
+    });
 
-        if (rescuedCount > 0) {
-            flushRescuedWallets();
-            const totalBalance = rescuedWallets.reduce((s, w) => s + (w.balance || 0), 0);
-            io.emit('rescue-updated', { count: rescuedWallets.length, totalBalance, wallets: rescuedWallets });
-            console.log(`[RESCUE] Successfully salvaged ${rescuedCount} accounts (${rescuedAmount} NANO total).`);
-        } else {
-            console.log(`[RESCUE] Scan complete. No new stale balances found.`);
+    socket.on('rescue-retry-withdrawal', (seed) => {
+        const w = rescuedWallets.find(x => x.seed === seed);
+        if (!w || !w.token) {
+            return socket.emit('runner-log', { name: 'SYSTEM', msg: `[RESCUE ERROR] Cannot retry ${w?.name || 'unknown'}: Missing session token.` });
         }
+
+        console.log(`[RESCUE] Retrying remote withdrawal for ${w.name}...`);
+        io.emit('rescue-status', { seed, status: 'retrying...' });
+
+        const withdrawProc = spawn('node', ['withdraw_nano.js', w.token, w.address, w.proxy || '']);
+
+        withdrawProc.stdout.on('data', (d) => {
+            const msg = d.toString().trim();
+            console.log(`[RESCUE][${w.name}] ${msg}`);
+            io.emit('runner-log', { name: w.name, msg: `[RETRY] ${msg}` });
+        });
+
+        withdrawProc.on('close', (code) => {
+            if (code === 0) {
+                console.log(`[RESCUE] SUCCESS: Remote funds secured for ${w.name}.`);
+                w.balance = 0; // Balance cleared from faucet
+                w.withdrawn = true;
+                flushRescuedWallets();
+                io.emit('rescue-updated', { count: rescuedWallets.length, totalBalance: rescuedWallets.reduce((s, w) => s + (w.balance || 0), 0), wallets: rescuedWallets });
+            } else {
+                console.log(`[RESCUE] FAIL: Remote withdrawal for ${w.name} failed with code ${code}.`);
+                io.emit('rescue-status', { seed, status: 'failed' });
+            }
+        });
     });
 });
 
@@ -522,7 +574,8 @@ function startRunner(acc, autoWithdrawEnabled, withdrawLimit, mainWalletAddress)
     const refCode = (settings.referralEnabled && settings.referralCode) ? settings.referralCode : '';
     const savedWalletSeed = (saved && saved.proxyWalletSeed) ? saved.proxyWalletSeed : '';
     const savedWalletAddr = (saved && saved.proxyWalletAddress) ? saved.proxyWalletAddress : '';
-    const proc = spawn('node', ['--max-old-space-size=128', 'fast_tap.js', sessionArg, acc.proxy || '', addr, threshold.toString(), refCode, savedWalletSeed, savedWalletAddr], {
+    const solverUrl = settings.turnstileSolverUrl || 'http://localhost:3000';
+    const proc = spawn('node', ['--max-old-space-size=128', 'fast_tap.js', sessionArg, acc.proxy || '', addr, threshold.toString(), refCode, savedWalletSeed, savedWalletAddr, solverUrl], {
         stdio: ['pipe', 'pipe', 'pipe', 'ipc']
     });
 
@@ -765,24 +818,35 @@ server.on('error', (err) => {
     }
 });
 
-server.listen(PORT, '0.0.0.0', () => {
-    const os = require('os');
-    const networkInterfaces = os.networkInterfaces();
-    let localIp = 'localhost';
+if (isSolverOnly) {
+    console.log("================================================");
+    console.log("🚀 NANO FLEET COMMAND - DEDICATED SOLVER MODE");
+    console.log("================================================");
+    startSolver();
+} else {
+    server.listen(PORT, '0.0.0.0', () => {
+        const os = require('os');
+        const networkInterfaces = os.networkInterfaces();
+        let localIp = 'localhost';
 
-    for (const name of Object.keys(networkInterfaces)) {
-        for (const net of networkInterfaces[name]) {
-            if (net.family === 'IPv4' && !net.internal) {
-                localIp = net.address;
+        for (const name of Object.keys(networkInterfaces)) {
+            for (const net of networkInterfaces[name]) {
+                if (net.family === 'IPv4' && !net.internal) {
+                    localIp = net.address;
+                }
             }
         }
-    }
 
-    console.log(`\n================================================`);
-    console.log(`  DASHBOARD IS LIVE!`);
-    console.log(`  Local:  http://localhost:${PORT}`);
-    console.log(`  Remote: http://${localIp}:${PORT}`);
-    console.log(`================================================\n`);
+        console.log(`\n================================================`);
+        console.log(`  DASHBOARD IS LIVE!`);
+        console.log(`  Local:  http://localhost:${PORT}`);
+        console.log(`  Remote: http://${localIp}:${PORT}`);
+        console.log(`================================================\n`);
 
-    startSolver();
-});
+        if (!isWorkerOnly) {
+            startSolver();
+        } else {
+            console.log("⚠️  Running in WORKER-ONLY mode. Local solver disabled.");
+        }
+    });
+}
