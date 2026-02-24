@@ -250,14 +250,29 @@ function App() {
               </h2>
 
               <div>
-                <label className="text-xs font-bold text-text-dim mb-2 block uppercase tracking-wider">Target Fleet Size</label>
-                <input
-                  type="number"
-                  className="input-field w-full text-lg font-mono"
-                  value={targetFleet}
-                  onChange={(e) => setTargetFleet(e.target.value)}
-                  disabled={isRunning}
-                />
+                <label className="text-xs font-bold text-text-dim mb-2 block uppercase tracking-wider flex justify-between">
+                  Target Fleet Size
+                  {isRunning && (
+                    <span className="text-[9px] text-cyan-400 animate-pulse">Active</span>
+                  )}
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    className="input-field flex-1 text-lg font-mono"
+                    value={targetFleet}
+                    onChange={(e) => setTargetFleet(e.target.value)}
+                  />
+                  {isRunning && (
+                    <button
+                      onClick={startFleet}
+                      className="px-4 py-2 rounded-lg text-[9px] font-black uppercase bg-cyan-500/20 text-cyan-400 border border-cyan-500/50 hover:bg-cyan-500/30 transition-all flex items-center justify-center glow-cyan"
+                      title="Apply new size and restart fleet"
+                    >
+                      <Power className="mr-1 size-3" /> RESCALE
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* PROXY CONFIG */}
