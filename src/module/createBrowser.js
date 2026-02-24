@@ -49,6 +49,25 @@ async function createBrowser() {
 
         if (!isLinux) {
             browserConfig.customConfig = { chromePath: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe' };
+        } else {
+            // Hardened Linux path detection for Ubuntu/Debian
+            const fs = require('fs');
+            const commonPaths = [
+                process.env.CHROME_PATH,
+                '/usr/bin/google-chrome',
+                '/usr/bin/google-chrome-stable',
+                '/usr/bin/chromium-browser',
+                '/usr/bin/chromium',
+                '/snap/bin/chromium'
+            ];
+
+            const validPath = commonPaths.find(p => p && fs.existsSync(p));
+            if (validPath) {
+                console.log(`[INFO] Linux: Using detected browser path: ${validPath}`);
+                browserConfig.customConfig = { chromePath: validPath };
+            } else {
+                console.log(`[WARNING] Linux: No browser found in common paths. Falling back to default...`);
+            }
         }
 
         console.log(`[INFO] Launching Browser (Linux=${isLinux}, Headless=${browserConfig.headless})...`);

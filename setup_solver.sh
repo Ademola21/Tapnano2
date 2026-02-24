@@ -21,8 +21,17 @@ if ! command -v node &> /dev/null || [[ $(node -v | cut -d. -f1 | tr -d v) -lt 2
     sudo apt-get install -y nodejs
 fi
 
-# 3. Install Browser Dependencies (Chromium + Xvfb)
-echo "[3/6] Installing browser dependencies..."
+# 3. Install Google Chrome (Required for turnstile)
+echo "[3/6] Installing Google Chrome stable..."
+if ! command -v google-chrome &> /dev/null; then
+    wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/googlechrome-linux-keyring.gpg
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/googlechrome-linux-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+    sudo apt-get update -y
+    sudo apt-get install -y google-chrome-stable
+fi
+
+# 4. Install Browser Dependencies (Xvfb + Libs)
+echo "[4/6] Installing browser support libraries..."
 sudo apt-get install -y \
     libgbm-dev libnss3 libatk-bridge2.0-0 libgtk-3-0 \
     libxss1 libxdamage1 libxcomposite1 \
