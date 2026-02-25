@@ -407,6 +407,7 @@ function saveAccountState(name, earnings) {
 }
 
 function startWorkerChunk(chunk, autoWithdraw, limit, mWallet) {
+    const chunkId = `chunk_${Math.random().toString(36).slice(2, 6)}`;
     const globalConfig = {
         mainWalletAddress: (mWallet || '').replace('xrb_', 'nano_'),
         withdrawThreshold: autoWithdraw ? limit : 0,
@@ -432,7 +433,6 @@ function startWorkerChunk(chunk, autoWithdraw, limit, mWallet) {
     });
 
     // Track the process and its managed units
-    const chunkId = `chunk_${Math.random().toString(36).slice(2, 6)}`;
 
     chunk.forEach(acc => {
         runners[acc.name] = {
