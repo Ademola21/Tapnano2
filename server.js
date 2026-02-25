@@ -112,8 +112,8 @@ async function autoRecoverFleet() {
         const { targetSize, autoWithdraw, withdrawLimit } = settings.activeFleet;
         console.log(`[RECOVERY] Found active fleet invitation in settings (size: ${targetSize}). Recovering bots...`);
 
-        const accounts = await fillFleet(targetSize);
-        const sliced = accounts.slice(0, targetSize);
+        allAccounts = await fillFleet(targetSize);
+        const sliced = allAccounts.slice(0, targetSize);
 
         for (let i = 0; i < sliced.length; i++) {
             const acc = sliced[i];
@@ -305,7 +305,8 @@ io.on('connection', (socket) => {
         settings.activeFleet = { targetSize, autoWithdraw: autoWithdrawEnabled, withdrawLimit };
         fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 4));
 
-        const sliced = (await fillFleet(targetSize)).slice(0, targetSize);
+        allAccounts = await fillFleet(targetSize);
+        const sliced = allAccounts.slice(0, targetSize);
         Object.keys(runners).forEach(n => stopRunner(n, true));
 
         io.emit('init', { accounts: sliced, runners: sliced.map(a => ({ name: a.name, status: 'deploying' })), nodeHealth });
