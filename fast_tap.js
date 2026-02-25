@@ -23,9 +23,10 @@ const WS_URL = 'wss://api.thenanobutton.com/ws';
 let TURNSTILE_SERVER = 'http://127.0.0.1:3000/cf-clearance-scraper';
 
 class FastTapper {
-    constructor(sessionToken, proxy = null) {
+    constructor(sessionToken, proxy = null, referralCode = '') {
         this.sessionToken = sessionToken;
         this.proxy = proxy;
+        this.referralCode = referralCode;
         this.ws = null;
         this.tapInterval = null;
         this.balance = 0;
@@ -151,10 +152,10 @@ class FastTapper {
                         reqOpts.httpsAgent = new HttpsProxyAgent(this.proxy);
                     }
 
-                    const sessionUrl = referralCode
-                        ? `https://api.thenanobutton.com/api/session?ref=${encodeURIComponent(referralCode)}`
+                    const sessionUrl = this.referralCode
+                        ? `https://api.thenanobutton.com/api/session?ref=${encodeURIComponent(this.referralCode)}`
                         : 'https://api.thenanobutton.com/api/session';
-                    if (referralCode) this.log(`Using referral code: ${referralCode}`);
+                    if (this.referralCode) this.log(`Using referral code: ${this.referralCode}`);
                     this.log(`Attempting session fetch (Attempt ${attempt}/3)...`);
                     let data;
                     try {
@@ -549,7 +550,7 @@ if (require.main === module) {
         }
     }
 
-    const tapper = new FastTapper(token, proxy);
+    const tapper = new FastTapper(token, proxy, referralCodeExtra);
     tapper.withdrawAddress = address;
     tapper.withdrawThreshold = threshold;
     tapper.start();

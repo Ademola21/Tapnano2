@@ -411,7 +411,8 @@ function startWorkerChunk(chunk, autoWithdraw, limit, mWallet) {
         mainWalletAddress: (mWallet || '').replace('xrb_', 'nano_'),
         withdrawThreshold: autoWithdraw ? limit : 0,
         defaultProxy: settings.defaultProxy,
-        turnstileSolverUrl: settings.turnstileSolverUrl || 'http://localhost:3000'
+        turnstileSolverUrl: settings.turnstileSolverUrl || 'http://localhost:3000',
+        referralCode: (settings.referralEnabled && settings.referralCode) ? settings.referralCode : ''
     };
 
     // Prepare seeds for resume
