@@ -189,8 +189,16 @@ class FastTapper {
 
                         if (solverRes && solverRes.data && solverRes.data.source) {
                             try {
-                                // The source mode returns the HTML content. If it's a JSON API, it's often wrapped in <body> or raw.
-                                const html = solverRes.data.source;
+                                const sourceObj = solverRes.data.source;
+                                const html = typeof sourceObj === 'object' ? sourceObj.html : sourceObj;
+
+                                if (typeof sourceObj === 'object') {
+                                    if (sourceObj.userAgent) this._forcedUA = sourceObj.userAgent;
+                                    if (sourceObj.cookies) {
+                                        this._forcedCookies = sourceObj.cookies.map(c => `${c.name}=${c.value}`).join('; ');
+                                    }
+                                }
+
                                 const startIdx = html.indexOf('{');
                                 const endIdx = html.lastIndexOf('}');
                                 if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
@@ -260,9 +268,17 @@ class FastTapper {
         const wsOptions = {
             headers: {
                 'Origin': 'https://thenanobutton.com',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+                'User-Agent': this._forcedUA || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Pragma': 'no-cache',
+                'Cache-Control': 'no-cache',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br'
             }
         };
+
+        if (this._forcedCookies) {
+            wsOptions.headers['Cookie'] = this._forcedCookies;
+        }
 
         if (this.proxy) {
             this.log(`Using proxy: ${this.proxy}`);

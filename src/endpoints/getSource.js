@@ -58,10 +58,12 @@ function getSource({ url, proxy }) {
               .waitForNavigation({ waitUntil: "load", timeout: 5000 })
               .catch(() => { });
             const html = await page.content();
+            const cookies = await page.cookies();
+            const userAgent = await page.evaluate(() => navigator.userAgent);
             await context.close();
             isResolved = true;
             clearInterval(cl);
-            resolve(html);
+            resolve({ html, cookies, userAgent });
           }
         } catch (e) { }
       });
