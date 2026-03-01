@@ -28,9 +28,14 @@ function generateRandomIP() {
 }
 
 class FastTapper {
-    constructor(sessionToken, proxy = null, useFakeIp = false) {
+    constructor(sessionToken, proxy = null, referralCode = '', solverUrl = 'http://127.0.0.1:3000', useFakeIp = false) {
         this.sessionToken = sessionToken;
         this.proxy = proxy;
+        this.referralCode = referralCode;
+        this.solverUrl = solverUrl.replace(/\/+$/, '');
+        if (!this.solverUrl.includes('/cf-clearance-scraper')) {
+            this.solverUrl += '/cf-clearance-scraper';
+        }
         this.useFakeIp = useFakeIp;
         this.fakeIp = useFakeIp ? generateRandomIP() : null;
         this.ws = null;
@@ -45,6 +50,7 @@ class FastTapper {
         this.starting = false;
         this.isPaused = false;
         this._lastWithdrawalFailure = 0;
+        this.name = 'Worker';
         this.bridgeSessionId = `ws_${Math.random().toString(36).slice(2, 11)}`;
     }
 
@@ -404,7 +410,7 @@ if (require.main === module) {
     const savedWalletSeed = process.argv[7] || '';
     const savedWalletAddr = process.argv[8] || '';
     const remoteSolverUrl = process.argv[9] || null;
-    const useFakeIpFlag = true;
+    const useFakeIpFlag = process.argv[10] === 'true';
 
     if (useFakeIpFlag) proxy = null;
     if (remoteSolverUrl) {
@@ -412,7 +418,7 @@ if (require.main === module) {
         TURNSTILE_SERVER = remoteSolverUrl.replace(/\/+$/, '') + '/cf-clearance-scraper';
     }
 
-    const tapper = new FastTapper(token, proxy, useFakeIpFlag);
+    const tapper = new FastTapper(token, proxy, referralCode, remoteSolverUrl, useFakeIpFlag);
     tapper.withdrawAddress = address;
     tapper.withdrawThreshold = threshold;
     tapper.start();
