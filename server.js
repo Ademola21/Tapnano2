@@ -44,12 +44,6 @@ const io = new Server(server, {
 });
 
 const PORT = 4000;
-const NODES = [
-    'https://rainstorm.city/api',
-    'https://node.somenano.com/proxy',
-    'https://nanoslo.0x.no/proxy',
-    'https://uk1.public.xnopay.com/proxy'
-];
 
 app.use(cors());
 app.use(express.json());
@@ -57,8 +51,8 @@ app.use(express.json());
 // Serve static dashboard files
 app.use(express.static(path.join(__dirname, 'dashboard/dist')));
 
-// Fallback for SPA routing
-app.get('/', (req, res) => {
+// Fallback for SPA routing (Wildcard allows deep linking)
+app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'dashboard/dist/index.html'));
 });
 
@@ -86,7 +80,13 @@ let settings = {
         autoWithdraw: false,
         withdrawLimit: 0
     },
-    turnstileSolverUrl: "http://localhost:3000"
+    turnstileSolverUrl: "http://localhost:3000",
+    nodes: [
+        'https://rainstorm.city/api',
+        'https://node.somenano.com/proxy',
+        'https://nanoslo.0x.no/proxy',
+        'https://uk1.public.xnopay.com/proxy'
+    ]
 };
 
 function flushSessions() {
@@ -96,13 +96,14 @@ function flushSessions() {
 }
 
 async function checkNodes() {
-    for (let url of NODES) {
+    const list = settings.nodes || [];
+    for (let url of list) {
         try {
             const start = Date.now();
             await axios.post(url, { action: 'block_count' }, { timeout: 5000 });
-            nodeHealth[url] = { status: 'healthy', latency: Date.now() - start };
+            nodeHealth[url] = { status: 'healthy', healthy: true, latency: Date.now() - start };
         } catch (e) {
-            nodeHealth[url] = { status: 'down', error: e.message };
+            nodeHealth[url] = { status: 'down', healthy: false, error: e.message };
         }
     }
     if (!isSolverOnly) io.emit('node-health', nodeHealth);
