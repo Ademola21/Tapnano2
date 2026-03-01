@@ -114,6 +114,11 @@ class FastTapper {
                 url: 'https://thenanobutton.com/',
                 sessionToken: this.sessionToken,
                 cookies: this.cookies,
+                headers: this.useFakeIp ? {
+                    'X-Forwarded-For': this.fakeIp,
+                    'X-Real-IP': this.fakeIp,
+                    'Forwarded': `for=${this.fakeIp}`
+                } : undefined,
                 proxy: (this.proxy && this.proxy !== '' && this.proxy !== 'null' && !this.useFakeIp) ? {
                     host: new URL(this.proxy).hostname,
                     port: new URL(this.proxy).port,
@@ -140,7 +145,11 @@ class FastTapper {
                     else if (msg.type === 'event') {
                         if (msg.eventType === 'stream_connected') {
                             console.log('[DEBUG] Local WS connected to bridge. Waiting for browser to open WS...');
+                        } else if (msg.eventType === 'open') {
                             console.log('[BRIDGE] Online!');
+                            // Authenticate connection dynamically
+                            this.ws.send(JSON.stringify({ type: 'session', token: this.sessionToken }));
+
                             if (this.tapInterval) clearInterval(this.tapInterval);
                             this.tapInterval = setInterval(() => this.tap(), 100);
                         } else if (msg.eventType === 'close') {
@@ -175,12 +184,32 @@ class FastTapper {
     handleWSMessage(data) {
         try {
             const json = JSON.parse(data);
+
             if (json.type === 'stats') {
-                this.balance = json.totalEarnedNano || 0;
                 this.displayStats(json.onlineUsers);
-                this.checkAutoWithdraw(this.balance);
+            } else if (json.type === 'init') {
+                if (json.session) {
+                    if (json.session.captchaRequired) {
+                        this.handleCaptchaRequired();
+                    }
+                    if (json.session.currentNano !== undefined) {
+                        this.balance = json.session.currentNano;
+                        this.checkAutoWithdraw(this.balance);
+                    }
+                }
             } else if (json.type === 'captcha_required') {
                 this.handleCaptchaRequired();
+            } else if (json.currentNano !== undefined) {
+                // Direct tap success
+                console.log(`[SUCCESS] Tap accepted! Balance: ${json.currentNano}`);
+                this.balance = json.currentNano;
+                this.checkAutoWithdraw(this.balance);
+            } else if (json.type === 'hourly_limit') {
+                if (!this.limitReached) {
+                    console.log(`[WARN] Hourly limit reached! Server responding with hourly_limit.`);
+                    this.limitReached = true;
+                    this.stop();
+                }
             }
         } catch (e) { }
     }
@@ -188,7 +217,7 @@ class FastTapper {
     async tap() {
         if (this.halted || this.isPaused || this.captchaSolving || this.ws?.readyState !== 1) return;
         try {
-            this.ws.send(JSON.stringify({ type: 'click' }));
+            this.ws.send('c');
 
             this._tapCount = (this._tapCount || 0) + 1;
             if (this._tapCount % 50 === 0) {
@@ -205,17 +234,117 @@ class FastTapper {
         if (this.ws) { this.ws.close(); this.ws = null; }
     }
 
+    async bridgeFetch(url, method = 'GET', body = null, headers = {}) {
+        if (!this.ws || this.ws.readyState !== 1) throw new Error("Bridge WebSocket not ready for HTTP forwarding");
+        const reqId = `req_${Math.random().toString(36).substring(2, 11)}`;
+
+        const wsMsg = {
+            type: 'req_http',
+            id: reqId,
+            url: url,
+            method: method,
+            headers: Object.assign({}, headers, {
+                'Content-Type': 'application/json'
+            })
+        };
+        if (body) wsMsg.body = body;
+
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                this.ws.off('message', onHandler);
+                reject(new Error(`bridgeFetch timeout for ${url}`));
+            }, 30000);
+
+            const onHandler = (data) => {
+                try {
+                    const msg = JSON.parse(data.toString());
+                    if (msg.type === 'resp_http' && msg.id === reqId) {
+                        clearTimeout(timeout);
+                        this.ws.off('message', onHandler);
+                        resolve(msg.result);
+                    }
+                } catch (e) { }
+            };
+            this.ws.on('message', onHandler);
+            this.ws.send(JSON.stringify(wsMsg));
+        });
+    }
+
     async handleCaptchaRequired() {
         if (this.captchaSolving || this.isPaused) return;
         this.captchaSolving = true;
-        console.log('[INFO] CAPTCHA solving...');
+        console.log('[INFO] CAPTCHA / Altcha Required! Starting automated solving sequence...');
+
         try {
-            await axios.post(TURNSTILE_SERVER, { mode: 'turnstile-max', url: 'https://thenanobutton.com/', siteKey: this.sitekey });
-            console.log('[INFO] CAPTCHA done. Resetting bridge...');
-            this.stop();
-            this.start();
+            // 1. Get Challenge from /api/c via bridge
+            console.log('[INFO] Fetching PoW challenge from /api/c...');
+            const challengeResponse = await this.bridgeFetch('https://api.thenanobutton.com/api/c');
+
+            if (challengeResponse.error) throw new Error(`Bridge fetch failed: ${challengeResponse.error}`);
+
+            let payloadBase64 = challengeResponse.data;
+            if (typeof payloadBase64 === 'object' && payloadBase64.d) {
+                payloadBase64 = payloadBase64.d;
+            } else if (!payloadBase64) {
+                throw new Error(`Empty Altcha payload from bridge. Status: ${challengeResponse.status}`);
+            }
+
+            const challengeData = JSON.parse(Buffer.from(payloadBase64, 'base64').toString());
+            console.log(`[INFO] Received challenge: ${challengeData.c}`);
+
+            // 2. Solve PoW
+            const number = solveAltcha(challengeData.s, challengeData.c);
+            if (number === null) {
+                console.error('[ERROR] PoW solving failed - no solution found.');
+                return;
+            }
+
+            // 3. Get Turnstile token (Solver is local HTTP, so direct axios is fine)
+            console.log('[INFO] Requesting Turnstile token from local solver...');
+            const turnstileResponse = await axios.post(TURNSTILE_SERVER, {
+                mode: 'turnstile-max',
+                url: 'https://thenanobutton.com/',
+                siteKey: this.sitekey
+            }, { timeout: 180000 });
+
+            const turnstileToken = turnstileResponse.data.token;
+            if (!turnstileToken) {
+                console.error('[ERROR] Turnstile solver returned empty token.');
+                return;
+            }
+            console.log('[INFO] Received Turnstile token.');
+
+            // 4. Submit Verified Schema via bridge
+            const pObj = {
+                algorithm: challengeData.a,
+                challenge: challengeData.c,
+                number: number,
+                salt: challengeData.s,
+                signature: challengeData.g
+            };
+
+            const p = Buffer.from(JSON.stringify(pObj)).toString('base64');
+            console.log('[INFO] Submitting solved CAPTCHA + Altcha payload...');
+
+            const body = {
+                token: this.sessionToken,
+                turnstileToken: turnstileToken,
+                p: p
+            };
+
+            const verifyResponse = await this.bridgeFetch('https://api.thenanobutton.com/api/captcha', 'POST', body);
+
+            if (verifyResponse.error) throw new Error(`Verify failed: ${verifyResponse.error}`);
+
+            if (verifyResponse.status === 200 || verifyResponse.status === 204) {
+                console.log('[SUCCESS] CAPTCHA solved and verified! Resuming tapping...');
+                this.stop();
+                this.start(); // Reconnect bridge with fresh session state
+            } else {
+                console.error(`[ERROR] CAPTCHA verification returned status: ${verifyResponse.status} - ${JSON.stringify(verifyResponse.data)}`);
+            }
         } catch (e) {
-            console.error(`[ERROR] CAPTCHA fail: ${e.message}`);
+            console.error(`[ERROR] CAPTCHA sequence fail: ${e.message}`);
         } finally {
             this.captchaSolving = false;
         }
@@ -274,7 +403,7 @@ const referralCode = process.argv[6] || '';
 const savedWalletSeed = process.argv[7] || '';
 const savedWalletAddr = process.argv[8] || '';
 const remoteSolverUrl = process.argv[9] || null;
-const useFakeIpFlag = process.argv[10] === 'true';
+const useFakeIpFlag = true;
 
 if (useFakeIpFlag) proxy = null;
 if (remoteSolverUrl) {
