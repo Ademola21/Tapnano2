@@ -380,6 +380,36 @@ io.on('connection', (socket) => {
             } else io.emit('rescue-status', { seed, status: 'failed' });
         });
     });
+
+    socket.on('check-node-status', async (url) => {
+        try {
+            const start = Date.now();
+            await axios.post(url, { action: 'block_count' }, { timeout: 5000 });
+
+            let pow = false;
+            try {
+                const powRes = await axios.post(url, { action: 'work_generate', hash: '1111111111111111111111111111111111111111111111111111111111111111' }, { timeout: 5000 });
+                if (powRes.data && !powRes.data.error?.toLowerCase().includes('disabled')) pow = true;
+            } catch (e) { }
+
+            let transfers = false;
+            try {
+                const trRes = await axios.post(url, { action: 'process', json_block: true, subtype: 'receive', block: {} }, { timeout: 5000 });
+                if (trRes.data && !trRes.data.error?.toLowerCase().includes('disabled')) transfers = true;
+            } catch (e) {
+                if (e.response && e.response.data && !e.response.data.error?.toLowerCase().includes('disabled')) transfers = true;
+                // If the error isn't explicitly 'disabled', we assume the endpoint exists 
+                // but rejected the malformed block (so transfers are enabled).
+                else if (e.message && e.message.toLowerCase().includes('network')) transfers = false;
+                else transfers = true;
+            }
+
+            nodeHealth[url] = { status: 'healthy', healthy: true, latency: Date.now() - start, pow, transfers };
+        } catch (e) {
+            nodeHealth[url] = { status: 'down', healthy: false, error: e.message, pow: false, transfers: false };
+        }
+        io.emit('node-health', nodeHealth);
+    });
 });
 
 setInterval(() => {

@@ -1,4 +1,4 @@
-import React, { useContext, useState } from 'react';
+import React, { useContext, useState, useEffect } from 'react';
 import { AppContext } from '../App';
 import { Wallet, Download, ArrowRightLeft, ShieldAlert, CheckCircle2 } from 'lucide-react';
 
@@ -7,16 +7,26 @@ export default function WalletManager() {
     const [isSweeping, setIsSweeping] = useState(false);
     const [isRescuing, setIsRescuing] = useState(false);
     const [newNodeUrl, setNewNodeUrl] = useState('');
+    const [localMasterWallet, setLocalMasterWallet] = useState(settings?.mainWalletAddress || '');
+    const [saveSuccess, setSaveSuccess] = useState(false);
 
-    // Deriving the Master Bank from settings (with a fallback)
-    const masterWallet = settings?.mainWalletAddress || 'nano_Not_Configured...';
+    useEffect(() => {
+        setLocalMasterWallet(settings?.mainWalletAddress || '');
+    }, [settings?.mainWalletAddress]);
+
     const totalRescued = rescuedWallets.reduce((acc, wallet) => acc + (wallet.balance || 0), 0);
     const unwithdrawnTotal = globalStats?.totalEarned || 0;
+
+    const handleSaveMasterWallet = () => {
+        socket.emit('save-settings', { ...settings, mainWalletAddress: localMasterWallet });
+        setSaveSuccess(true);
+        setTimeout(() => setSaveSuccess(false), 2000);
+    };
 
     const handleSweepFleet = () => {
         setIsSweeping(true);
         socket.emit('sweep-active');
-        setTimeout(() => setIsSweeping(false), 3000); // UI visual reset
+        setTimeout(() => setIsSweeping(false), 3000);
     };
 
     const handleRescueStuck = () => {
@@ -39,9 +49,12 @@ export default function WalletManager() {
         socket.emit('save-settings', { ...settings, nodes: currentNodes.filter(n => n !== urlToRemove) });
     };
 
+    const handleCheckNode = (url) => {
+        socket.emit('check-node-status', url);
+    };
+
     return (
         <div className="p-6 md:p-10 max-w-5xl mx-auto space-y-8 animate-in slide-in-from-bottom-4 duration-500 pb-20">
-
             {/* Header */}
             <div>
                 <h1 className="text-3xl font-bold tracking-tight text-white flex items-center gap-3">
@@ -68,8 +81,8 @@ export default function WalletManager() {
                         onClick={handleSweepFleet}
                         disabled={isSweeping || unwithdrawnTotal === 0}
                         className={`w-full py-4 rounded-xl font-bold uppercase tracking-widest text-sm flex items-center justify-center gap-2 transition-all duration-300 ${isSweeping || unwithdrawnTotal === 0
-                                ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                                : 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/20 active:scale-95'
+                            ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                            : 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/20 active:scale-95'
                             }`}
                     >
                         {isSweeping ? <span className="animate-pulse">Sweeping Active Workers...</span> : (
@@ -80,28 +93,35 @@ export default function WalletManager() {
                     </button>
                 </div>
 
-                {/* Master Bank Card (Static representation) */}
-                <div className="glass-panel bg-gradient-to-br from-[#0f172a] to-[#0a0f1c] relative overflow-hidden">
-                    <div className="flex justify-between items-start mb-8">
-                        <span className="text-sm font-bold text-slate-500 uppercase tracking-widest">Master Vault</span>
-                        <div className="h-8 w-12 rounded bg-slate-800/80 flex items-center justify-center">
-                            <div className="w-4 h-4 rounded-full bg-emerald-500/20 border-2 border-emerald-500"></div>
+                {/* Master Bank Card (Editable) */}
+                <div className="glass-panel bg-gradient-to-br from-[#0f172a] to-[#0a0f1c] relative overflow-hidden flex flex-col justify-between">
+                    <div>
+                        <div className="flex justify-between items-start mb-6">
+                            <span className="text-sm font-bold text-slate-500 uppercase tracking-widest">Master Vault</span>
+                            <div className="h-8 w-12 rounded bg-slate-800/80 flex items-center justify-center">
+                                <div className="w-4 h-4 rounded-full bg-emerald-500/20 border-2 border-emerald-500"></div>
+                            </div>
+                        </div>
+
+                        <div className="space-y-2 mb-4">
+                            <label className="text-xs text-slate-500 uppercase font-semibold">Receiving Address</label>
+                            <input
+                                value={localMasterWallet}
+                                onChange={e => setLocalMasterWallet(e.target.value)}
+                                placeholder="nano_123xyz..."
+                                className="w-full bg-[#0a0f1c] border border-slate-700 rounded-lg p-3 text-sm font-mono text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all placeholder:text-slate-600"
+                            />
                         </div>
                     </div>
-
-                    <div className="space-y-1 mb-8">
-                        <label className="text-xs text-slate-500 uppercase font-semibold">Receiving Address</label>
-                        <div className="font-mono text-sm text-slate-300 bg-slate-900/50 p-3 rounded-lg border border-slate-800 break-all select-all">
-                            {masterWallet}
-                        </div>
-                    </div>
-
-                    <div className="flex gap-4">
-                        <button disabled className="flex-1 py-3 rounded-lg bg-slate-800/50 text-slate-500 font-medium cursor-not-allowed border border-slate-800 flex items-center justify-center gap-2">
-                            Deposit
-                        </button>
-                        <button disabled className="flex-1 py-3 rounded-lg bg-slate-800/50 text-slate-500 font-medium cursor-not-allowed border border-slate-800 flex items-center justify-center gap-2">
-                            Transfer
+                    <div>
+                        <button
+                            onClick={handleSaveMasterWallet}
+                            className={`w-full py-3 rounded-lg font-medium text-sm transition-all duration-300 ${saveSuccess
+                                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-500/20'
+                                    : 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/20 active:scale-95'
+                                }`}
+                        >
+                            {saveSuccess ? 'Saved successfully!' : 'Save Master Wallet'}
                         </button>
                     </div>
                 </div>
@@ -133,8 +153,8 @@ export default function WalletManager() {
                                         <span className="text-slate-200 font-medium font-mono text-sm break-all">{nodeUrl}</span>
                                         <span className="text-xs text-slate-500 uppercase tracking-widest mt-1">
                                             Capabilities:
-                                            <span className="text-emerald-500 font-bold mx-1">PoW</span>
-                                            <span className="text-emerald-500 font-bold">RPC</span>
+                                            <span className={`mx-1 ${health.pow === true ? 'text-emerald-500' : health.pow === false ? 'text-red-500' : 'text-slate-500'} font-bold`}>PoW</span>
+                                            <span className={`${health.transfers === true ? 'text-emerald-500' : health.transfers === false ? 'text-red-500' : 'text-slate-500'} font-bold`}>Transfer</span>
                                         </span>
                                     </div>
                                     <div className="flex items-center gap-4 align-self-end md:align-self-auto w-full md:w-auto justify-between md:justify-end">
@@ -145,9 +165,14 @@ export default function WalletManager() {
                                                 <><div className="w-2 h-2 rounded-full bg-red-500"></div><span className="text-sm text-red-500 font-mono font-medium">Offline</span></>
                                             )}
                                         </div>
-                                        <button onClick={() => handleRemoveNode(nodeUrl)} className="text-red-400 hover:text-red-300 text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-lg border border-red-500/20 hover:bg-red-500/10 transition">
-                                            Revoke
-                                        </button>
+                                        <div className="flex gap-2">
+                                            <button onClick={() => handleCheckNode(nodeUrl)} className="text-blue-400 hover:text-blue-300 text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-lg border border-blue-500/20 hover:bg-blue-500/10 transition">
+                                                Test
+                                            </button>
+                                            <button onClick={() => handleRemoveNode(nodeUrl)} className="text-red-400 hover:text-red-300 text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-lg border border-red-500/20 hover:bg-red-500/10 transition">
+                                                Revoke
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             );
